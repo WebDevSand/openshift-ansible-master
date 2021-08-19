@@ -1,0 +1,98 @@
+---
+openshift_node_active_nodes: []
+openshift_node_machineconfigpool: 'worker'
+openshift_node_tls_verify: false
+
+openshift_node_kubeconfig_path: "{{ openshift_kubeconfig_path | default('~/.kube/config') | expanduser | realpath }}"
+openshift_node_kubeconfig: "{{ lookup('file', openshift_node_kubeconfig_path) | from_yaml }}"
+openshift_node_bootstrap_port: 22623
+openshift_node_bootstrap_server: "{{ openshift_node_kubeconfig.clusters.0.cluster.server.split(':')[0:-1] | join(':') | regex_replace('://api', '://api-int') }}:{{ openshift_node_bootstrap_port }}"
+openshift_node_bootstrap_endpoint: "{{ openshift_node_bootstrap_server }}/config/{{ openshift_node_machineconfigpool }}"
+
+openshift_packages: "{{ (openshift_node_packages + openshift_node_support_packages) | join(',') }}"
+
+openshift_node_packages:
+  - conmon
+  - cri-o-{{ crio_latest }}
+  - cri-tools
+  - openshift-clients-{{ l_cluster_version }}*
+  - openshift-hyperkube-{{ l_cluster_version }}*
+  - podman
+  - runc
+
+openshift_node_support_packages: "{{
+  openshift_node_support_packages_base +
+  openshift_node_support_packages_by_os_major_version[ansible_distribution_major_version] +
+  openshift_node_support_packages_by_arch[ansible_architecture] }}"
+
+openshift_node_support_packages_base:
+  - kernel
+  - systemd
+  - selinux-policy-targeted
+  - setools-console
+  - dracut-network
+  - passwd
+  - openssh-server
+  - openssh-clients
+  - skopeo
+  - containernetworking-plugins
+  - nfs-utils
+  - NetworkManager
+  - NetworkManager-ovs  # https://bugzilla.redhat.com/show_bug.cgi?id=1884095
+  - dnsmasq
+  - lvm2
+  - iscsi-initiator-utils
+  - sg3_utils
+  - device-mapper-multipath
+  - xfsprogs
+  - e2fsprogs
+  - mdadm
+  - cryptsetup
+  - chrony
+  - logrotate
+  - sssd
+  - shadow-utils
+  - sudo
+  - coreutils
+  - less
+  - tar
+  - xz
+  - gzip
+  - bzip2
+  - rsync
+  - tmux
+  - nmap-ncat
+  - net-tools
+  - bind-utils
+  - strace
+  - bash-completion
+  - vim-minimal
+  - nano
+  - authconfig
+  - iptables-services
+  - cifs-utils  # https://bugzilla.redhat.com/show_bug.cgi?id=1827982
+
+openshift_node_support_packages_by_os_major_version:
+  "7":
+    - openvswitch2.13
+    - policycoreutils-python
+    - bridge-utils
+    - container-storage-setup
+    - ceph-common
+  "8":
+    - openvswitch2.15
+    - policycoreutils-python-utils
+
+openshift_node_support_packages_by_arch:
+  ppc64le:
+    - irqbalance
+  s390x:
+    - s390utils-base
+  x86_64:
+    - microcode_ctl
+    - irqbalance
+    - biosdevname
+    # GlusterFS
+    # Temporarily only for x86_64 as were not shipping it for other arches atm
+    # Tracked in https://bugzilla.redhat.com/show_bug.cgi?id=1715175
+    - glusterfs-fuse

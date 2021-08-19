@@ -1,0 +1,36 @@
+---
+sudo: false
+
+cache:
+  - pip
+
+before_cache:
+  - rm ~/.cache/pip/log/debug.log
+
+language: python
+python:
+  - "3.6"
+
+before_install:
+  - python -m pip install --upgrade virtualenv
+
+install:
+  - pip install --upgrade pip
+  - pip install tox-travis
+
+script:
+  - tox
+
+after_failure:
+  - echo "Here's a list of installed Python packages:"
+  - pip list --format=columns
+  - echo Dumping logs, because tests failed to succeed
+  - |
+      for log in `ls .tox/*/log/*.log`
+      do
+        echo Outputting $log
+        cat $log
+      done
+  - pip_debug_log=/home/travis/.cache/pip/log/debug.log
+  - echo Outputting pip debug log from $pip_debug_log
+  - cat $pip_debug_log

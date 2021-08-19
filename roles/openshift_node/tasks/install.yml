@@ -1,0 +1,112 @@
+---
+- name: Retrieve rendered-worker name
+  command: >
+    oc get machineconfigpool worker
+    --kubeconfig={{ openshift_node_kubeconfig_path }}
+    --output=jsonpath='{.status.configuration.name}'
+  delegate_to: localhost
+  run_once: true
+  register: rendered_worker
+  until:
+  - rendered_worker.stdout != ''
+  changed_when: false
+
+- name: Check cluster FIPS status
+  command: >
+    oc get machineconfig {{ rendered_worker.stdout }}
+    --kubeconfig={{ openshift_node_kubeconfig_path }}
+    --output=jsonpath='{.spec.fips}'
+  delegate_to: localhost
+  run_once: true
+  register: cluster_fips
+  until:
+  - cluster_fips.stdout != ''
+  changed_when: false
+
+- name: Fail if host FIPS status does not match cluster FIPS status
+  fail:
+    msg: >
+      Host FIPS status of '{{ ansible_fips }}' does not match
+      cluster FIPS status of '{{ cluster_fips.stdout | bool }}'.
+      Please update the host configuration before proceeding.
+  when:
+  - ansible_fips != (cluster_fips.stdout | bool)
+
+- name: Get cluster version
+  command: >
+    oc get clusterversion
+    --kubeconfig={{ openshift_node_kubeconfig_path }}
+    --output=jsonpath='{.items[0].status.desired.version}'
+  delegate_to: localhost
+  register: oc_get
+  until:
+  - oc_get.stdout != ''
+  changed_when: false
+
+- name: Set fact l_cluster_version
+  set_fact:
+    l_cluster_version: "{{ oc_get.stdout | regex_search('^\\d+\\.\\d+') }}"
+
+- name: Get kubernetes server version
+  command: >
+    oc version
+    --kubeconfig={{ openshift_node_kubeconfig_path }}
+    --output=json
+  delegate_to: localhost
+  register: oc_get
+  until:
+  - oc_get.stdout != ''
+  changed_when: false
+
+- name: Set fact l_kubernetes_server_version
+  set_fact:
+    l_kubernetes_server_version: "{{ (oc_get.stdout | from_json).serverVersion.major ~ '.' ~  (oc_get.stdout | from_json).serverVersion.minor | regex_search('^\\d+') }}"
+
+- name: Get available cri-o RPM versions
+  package:
+    list: cri-o
+  register: crio_version
+
+- name: Set fact crio_latest
+  set_fact:
+    crio_latest: "{{ crio_version.results | selectattr('yumstate', 'match', 'available') | map(attribute='version') | list | last }}"
+
+- name: Fail if cri-o is less than current kubernetes server version
+  fail:
+    msg: >
+      Latest available cri-o ({{ crio_latest }}) version is less than current
+      kubernetes server version ({{ l_kubernetes_server_version }}).
+  when:
+  - crio_latest is version(l_kubernetes_server_version, 'lt')
+
+- block:
+  - name: Install openshift packages
+    package:
+      name: "{{ openshift_packages }}"
+      state: latest
+    async: 3600
+    poll: 30
+    register: result
+    until: result is succeeded
+
+  rescue:
+  - name: Package install failure message
+    fail:
+      msg: >
+        Unable to install {{ openshift_packages }}.
+        Please ensure repos are configured properly to provide these packages
+        and indicated versions.
+
+- name: Enable the CRI-O service
+  systemd:
+    name: "crio"
+    enabled: yes
+
+# persistent storage in journal is needed for MachineConfig to work
+- name: Enable persistent storage on journal
+  ini_file:
+    dest: "/etc/systemd/journald.conf"
+    section: Journal
+    option: Storage
+    value: "persistent"
+    no_extra_spaces: yes
